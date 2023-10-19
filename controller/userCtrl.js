@@ -8,32 +8,59 @@ const asyncHandler = require("express-async-handler");
 const { generateToken } = require("../config/jwtToken");
 const validateMongoDbId = require("../utils/validateMongodbId");
 const { generateRefreshToken } = require("../config/refreshtoken");
-const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const randomstring = require("randomstring");
+const nodemailer = require("nodemailer");
+const hashPassword = require("../helpers/authHelper");
 // const sendEmail = require("./emailCtrl");
+
+//RESET PASSWORD----------------------------------------------
+const sendResetPasswordMail = async (name, email, token) => {
+  try {
+    const transporter = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      auth: {
+        user: process.env.email_User,
+        pass: process.env.email_Password,
+      },
+    });
+
+    const mailOptions = {
+      from: process.env.email_User,
+      to: email,
+      subject: "Password Reset.",
+      html: `<div> Hi <b>${name}</b>. Please click on the below button to reset your password. </div>
+      <a style="text-decoration:none; display:inline-block; text-align:center; padding:5px 10px; height:auto; width:auto; background-color:green; color:white; font-weight:700; margin-top:5px; margin-left:4px; border-radius:3px;" href="http://localhost:8000/api/v1/auth/reset-password?token=${token}"> RESET </a>`,
+    };
+
+    transporter.sendMail(mailOptions, function (error, info) {
+      if (error) {
+        console.log(error);
+      } else {
+        console.log("Mail has been sent successfully.", info.response);
+      }
+    });
+  } catch (error) {
+    res.status(400).send({
+      success: true,
+      message: error.message,
+    });
+  }
+};
 
 // Create a User ----------------------------------------------
 
 const createUser = asyncHandler(async (req, res) => {
-  /**
-   * TODO:Get the email from req.body
-   */
   const email = req.body.email;
-  /**
-   * TODO:With the help of email find the user exists or not
-   */
   const findUser = await User.findOne({ email: email });
 
   if (!findUser) {
-    /**
-     * TODO:if user not found user create a new user
-     */
     const newUser = await User.create(req.body);
     res.json(newUser);
   } else {
-    /**
-     * TODO:if user found then thow an error: User already exists
-     */
     throw new Error("User Already Exists");
   }
 });
@@ -41,10 +68,9 @@ const createUser = asyncHandler(async (req, res) => {
 // Login a user
 const loginUserCtrl = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
-  // check if user exists or not
   const findUser = await User.findOne({ email });
   if (findUser && (await findUser.isPasswordMatched(password))) {
-    const refreshToken = await generateRefreshToken(findUser?._id);
+    const refreshToken = generateRefreshToken(findUser?._id);
     const updateuser = await User.findByIdAndUpdate(
       findUser.id,
       {
@@ -58,8 +84,7 @@ const loginUserCtrl = asyncHandler(async (req, res) => {
     });
     res.json({
       _id: findUser?._id,
-      firstname: findUser?.firstname,
-      lastname: findUser?.lastname,
+      name: findUser?.name,
       email: findUser?.email,
       mobile: findUser?.mobile,
       token: generateToken(findUser?._id),
@@ -91,8 +116,7 @@ const loginAdmin = asyncHandler(async (req, res) => {
     });
     res.json({
       _id: findAdmin?._id,
-      firstname: findAdmin?.firstname,
-      lastname: findAdmin?.lastname,
+      name: findAdmin?.name,
       email: findAdmin?.email,
       mobile: findAdmin?.mobile,
       token: generateToken(findAdmin?._id),
@@ -123,19 +147,19 @@ const handleRefreshToken = asyncHandler(async (req, res) => {
 
 const logout = asyncHandler(async (req, res) => {
   const cookie = req.cookies;
-  if (!cookie?.refreshToken) throw new Error("No Refresh Token in Cookies");
+  if (!cookie?.refreshToken) {
+    return res.sendStatus(204);
+  }
   const refreshToken = cookie.refreshToken;
   const user = await User.findOne({ refreshToken });
   if (!user) {
-    res.clearCookie("refreshToken", {
-      httpOnly: true,
-      secure: true,
-    });
+    res.clearCookie("refreshToken");
     return res.sendStatus(204); // forbidden
   }
-  await User.findOneAndUpdate(refreshToken, {
-    refreshToken: "",
-  });
+  await User.findOneAndUpdate(
+    { refreshToken: refreshToken },
+    { refreshToken: "" }
+  );
   res.clearCookie("refreshToken", {
     httpOnly: true,
     secure: true,
@@ -153,8 +177,7 @@ const updatedUser = asyncHandler(async (req, res) => {
     const updatedUser = await User.findByIdAndUpdate(
       _id,
       {
-        firstname: req?.body?.firstname,
-        lastname: req?.body?.lastname,
+        name: req?.body?.name,
         email: req?.body?.email,
         mobile: req?.body?.mobile,
       },
@@ -275,56 +298,75 @@ const unblockUser = asyncHandler(async (req, res) => {
   }
 });
 
-const updatePassword = asyncHandler(async (req, res) => {
-  const { _id } = req.user;
-  const { password } = req.body;
-  validateMongoDbId(_id);
-  const user = await User.findById(_id);
-  if (password) {
-    user.password = password;
-    const updatedPassword = await user.save();
-    res.json(updatedPassword);
-  } else {
-    res.json(user);
-  }
-});
-
-const forgotPasswordToken = asyncHandler(async (req, res) => {
-  const { email } = req.body;
-  const user = await User.findOne({ email });
-  if (!user) throw new Error("User not found with this email");
+const updatePassword = async (req, res) => {
   try {
-    const token = await user.createPasswordResetToken();
-    await user.save();
-    const resetURL = `Hi, Please follow this link to reset Your Password. This link is valid till 10 minutes from now. <a href='http://localhost:5000/api/user/reset-password/${token}'>Click Here</>`;
-    const data = {
-      to: email,
-      text: "Hey User",
-      subject: "Forgot Password Link",
-      htm: resetURL,
-    };
-    sendEmail(data);
-    res.json(token);
+    const token = req.body.token;
+    const tokenData = await User.findOne({ token });
+    if (tokenData) {
+      const password = req.body.password;
+      const newPassword = await hashPassword(password);
+      const userData = await User.findByIdAndUpdate(
+        { _id: tokenData._id },
+        { $set: { password: newPassword, token: "" } },
+        { new: true }
+      );
+      res.status(200).send({
+        success: true,
+        message: "Password has been reset successfully.",
+        data: userData,
+      });
+    } else {
+      res
+        .status(401)
+        .send({ success: true, message: "This token has been expired." });
+    }
   } catch (error) {
-    throw new Error(error);
+    res.status(400).send({ success: false, message: error.message });
   }
-});
+};
 
-const resetPassword = asyncHandler(async (req, res) => {
-  const { password } = req.body;
-  const { token } = req.params;
-  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
-  const user = await User.findOne({
-    passwordResetToken: hashedToken,
-    passwordResetExpires: { $gt: Date.now() },
-  });
-  if (!user) throw new Error(" Token Expired, Please try again later");
-  user.password = password;
-  user.passwordResetToken = undefined;
-  user.passwordResetExpires = undefined;
-  await user.save();
-  res.json(user);
-});
+const forgotPassword = async (req, res) => {
+  try {
+    console.log(req.body);
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (user) {
+      const randomString = randomstring.generate();
+      const updatedData = await User.updateOne(
+        { email },
+        { $set: { token: randomString } }
+      );
+      sendResetPasswordMail(user.name, user.email, randomString);
+      res.status(200).send({
+        success: true,
+        message:
+          "Mail for password reset has been sent to your entered email address!",
+      });
+    } else {
+      res
+        .status(404)
+        .send({ success: true, message: "This email doesnt't exist" });
+    }
+  } catch (error) {
+    res.status(400).send({ success: false, message: error.message });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  try {
+    const token = req.query.token;
+    const tokenData = await userModel.findOne({ token });
+    if (tokenData) {
+      res.redirect(`http://localhost:3000/reset-password?token=${token}`);
+    } else {
+      res
+        .status(200)
+        .send({ success: true, message: "This link has been expired." });
+    }
+  } catch (error) {
+    res.status(400).send({ success: false, message: error.message });
+  }
+};
 
 const getWishlist = asyncHandler(async (req, res) => {
   const { _id } = req.user;
@@ -511,7 +553,7 @@ module.exports = {
   handleRefreshToken,
   logout,
   updatePassword,
-  forgotPasswordToken,
+  forgotPassword,
   resetPassword,
   loginAdmin,
   getWishlist,
