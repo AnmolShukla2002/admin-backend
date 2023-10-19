@@ -12,7 +12,6 @@ const jwt = require("jsonwebtoken");
 const randomstring = require("randomstring");
 const nodemailer = require("nodemailer");
 const hashPassword = require("../helpers/authHelper");
-// const sendEmail = require("./emailCtrl");
 
 //RESET PASSWORD----------------------------------------------
 const sendResetPasswordMail = async (name, email, token) => {
