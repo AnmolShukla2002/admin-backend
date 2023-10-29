@@ -179,6 +179,7 @@ const updatedUser = asyncHandler(async (req, res) => {
         name: req?.body?.name,
         email: req?.body?.email,
         mobile: req?.body?.mobile,
+        address: req?.body?.address,
       },
       {
         new: true,
@@ -501,6 +502,7 @@ const getAllOrders = asyncHandler(async (req, res) => {
     throw new Error(error);
   }
 });
+
 const getOrderByUserId = asyncHandler(async (req, res) => {
   const { id } = req.params;
   validateMongoDbId(id);
@@ -514,6 +516,7 @@ const getOrderByUserId = asyncHandler(async (req, res) => {
     throw new Error(error);
   }
 });
+
 const updateOrderStatus = asyncHandler(async (req, res) => {
   const { status } = req.body;
   const { id } = req.params;
