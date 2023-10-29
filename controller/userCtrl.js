@@ -439,19 +439,14 @@ const emptyCart = asyncHandler(async (req, res) => {
 });
 
 const createOrder = asyncHandler(async (req, res) => {
-  const { COD, couponApplied } = req.body;
+  const { COD } = req.body;
   const { _id } = req.user;
   validateMongoDbId(_id);
   try {
     if (!COD) throw new Error("Create cash order failed");
     const user = await User.findById(_id);
     let userCart = await Cart.findOne({ orderby: user._id });
-    let finalAmout = 0;
-    if (couponApplied && userCart.totalAfterDiscount) {
-      finalAmout = userCart.totalAfterDiscount;
-    } else {
-      finalAmout = userCart.cartTotal;
-    }
+    let finalAmout = userCart.cartTotal;
 
     let newOrder = await new Order({
       products: userCart.products,
@@ -461,7 +456,7 @@ const createOrder = asyncHandler(async (req, res) => {
         amount: finalAmout,
         status: "Cash on Delivery",
         created: Date.now(),
-        currency: "usd",
+        currency: "INR",
       },
       orderby: user._id,
       orderStatus: "Cash on Delivery",
